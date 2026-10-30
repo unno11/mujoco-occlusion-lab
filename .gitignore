@@ -13,3 +13,7 @@ results/
 # editor
 .vscode/
 .idea/
+
+# internal notes (not published)
+docs/phase1-status.md
+docs/resume-bullet.md

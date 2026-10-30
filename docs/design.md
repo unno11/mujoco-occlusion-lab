@@ -59,9 +59,9 @@ Constant-velocity tracker with explicit uncertainty:
   consecutive measurements;
 * no measurement → predict. If the tool is within 10 cm of the estimate, the
   prediction is driven by the *tool* velocity, because during a push the object moves
-  with the pusher. Extrapolating the object's own last velocity instead runs away as
-  soon as the pusher slows (measured: 7 cm of drift in 60 hidden steps, enough to
-  trigger a pointless replan);
+  with the pusher. Extrapolating the object's own last velocity instead diverges as
+  soon as the pusher slows: over 60 hidden steps the estimate leads the object by
+  ~7 cm, enough to look like a line deviation;
 * variance grows with time hidden and with speed; above 60 mm standard deviation, or
   after 120 hidden steps, the estimate is declared *lost* and the policy retreats to
   the last seen position.
