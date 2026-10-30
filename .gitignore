@@ -1,0 +1,19 @@
+# python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# large / generated
+results/
+!results/.gitkeep
+figures/
+*.mp4
+
+# vendor meshes are large but needed to run the scene
+!assets/panda/assets/
+
+# editor
+.vscode/
+.idea/

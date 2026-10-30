@@ -1,0 +1,42 @@
+{
+  "scene": "assets/panda/scene_push.xml",
+  "control": {
+    "control_dt": 0.02,
+    "ik_dt": 0.01,
+    "position_cost": 1.0,
+    "orientation_cost": 0.0,
+    "posture_cost": 0.002,
+    "solver": "daqp"
+  },
+  "task": {
+    "box_half_size": 0.05,
+    "goal_xy": [
+      0.6,
+      0.0
+    ],
+    "goal_tol": 0.05,
+    "start_x_range": [
+      0.36,
+      0.42
+    ],
+    "start_y_range": [
+      -0.03,
+      0.03
+    ],
+    "max_control_steps": 600,
+    "push_height": 0.055,
+    "approach_height": 0.16,
+    "contact_gap": 0.05
+  },
+  "camera": {
+    "name": "rgb",
+    "width": 640,
+    "height": 480
+  },
+  "occluder": {
+    "y": -0.12,
+    "plate_half_width": 0.1,
+    "plate_half_height": 0.11,
+    "retracted_z": -0.3
+  }
+}

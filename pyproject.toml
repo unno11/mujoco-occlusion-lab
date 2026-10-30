@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "occlab"
+version = "0.1.0"
+description = "MuJoCo occlusion manipulation lab: pushing under partial and full visual occlusion with a history-aware state estimator"
+requires-python = ">=3.10"
+dependencies = [
+  "mujoco>=3.2",
+  "numpy>=1.26",
+  "opencv-python-headless>=4.9",
+  "mink>=0.4",
+  "imageio>=2.34",
+  "imageio-ffmpeg>=0.4",
+  "matplotlib>=3.8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

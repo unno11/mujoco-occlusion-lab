@@ -1,0 +1,79 @@
+<mujoco model="occlusion push lab">
+  <!-- Franka Emika Panda + table + red box + goal + fixed RGB camera + occluder plate.
+       Panda model: vendored from google-deepmind/mujoco_menagerie (Apache-2.0).
+       Local modification: the upstream keyframe in panda.xml was removed so this
+       scene can define the full 17-dof keyframe (7 arm + 2 fingers + box freejoint
+       + occluder slide). -->
+
+  <include file="panda.xml"/>
+
+  <option timestep="0.002" integrator="implicitfast" cone="elliptic" impratio="10"/>
+  <size njmax="1500" nconmax="200"/>
+
+  <visual>
+    <headlight diffuse="0.5 0.5 0.5" ambient="0.42 0.42 0.42" specular="0 0 0"/>
+    <global azimuth="140" elevation="-22" offwidth="960" offheight="720"/>
+    <quality shadowsize="512" offsamples="1"/>
+    <map znear="0.005" zfar="12"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.62 0.66 0.70" rgb2="0.30 0.32 0.35" width="256" height="512"/>
+    <texture type="2d" name="tabletex" builtin="checker" mark="edge" rgb1="0.56 0.54 0.50" rgb2="0.47 0.45 0.42"
+      markrgb="0.62 0.62 0.62" width="512" height="512"/>
+    <material name="tablemat" texture="tabletex" texrepeat="8 8" texuniform="true" reflectance="0.04"/>
+    <material name="redmat" rgba="0.86 0.06 0.06 1"/>
+    <material name="goalmat" rgba="0.10 0.80 0.20 0.45"/>
+    <material name="markermat" rgba="0.95 0.05 0.95 1"/>
+    <material name="occludermat" rgba="0.22 0.24 0.27 1"/>
+    <material name="wallmat" rgba="0.72 0.74 0.76 1"/>
+  </asset>
+
+  <worldbody>
+    <!-- work table: top surface is exactly z = 0, the arm stands on it -->
+    <geom name="table" type="box" pos="0.38 0 -0.02" size="0.42 0.36 0.02" material="tablemat"
+      contype="1" conaffinity="1" friction="1 0.005 0.0001" rgba="0.56 0.54 0.50 1"/>
+    <geom name="floor" type="plane" pos="0 0 -0.70" size="0 0 0.1" rgba="0.10 0.10 0.11 1"/>
+
+    <!-- neutral backdrop so the scene does not float in void -->
+    <geom name="backwall" type="box" pos="0.40 0.62 0.55" size="0.90 0.02 0.55" material="wallmat"
+      contype="0" conaffinity="0"/>
+    <geom name="leftwall" type="box" pos="-0.30 0.10 0.55" size="0.02 0.70 0.55" material="wallmat"
+      contype="0" conaffinity="0"/>
+
+    <!-- task-relevant free body: the red box that must be pushed -->
+    <body name="box" pos="0.44 0.00 0.050">
+      <freejoint name="box_free"/>
+      <geom name="box" type="box" size="0.050 0.050 0.050" material="redmat" mass="0.30"
+        condim="3" friction="1.0 0.005 0.0001" solref="0.004 1" solimp="0.95 0.99 0.001"/>
+    </body>
+
+    <!-- goal region, visual only (contype=0): detected from the image, not read as state -->
+    <geom name="goal_vis" type="box" pos="0.600 0.000 0.0015" size="0.055 0.055 0.0015"
+      material="goalmat" contype="0" conaffinity="0"/>
+
+    <!-- fiducial markers for the one-time camera-to-table homography calibration -->
+    <geom name="mk00" type="box" pos="0.20 -0.28 0.0015" size="0.012 0.012 0.0015" material="markermat" contype="0" conaffinity="0"/>
+    <geom name="mk01" type="box" pos="0.66 -0.28 0.0015" size="0.012 0.012 0.0015" material="markermat" contype="0" conaffinity="0"/>
+    <geom name="mk10" type="box" pos="0.20  0.28 0.0015" size="0.012 0.012 0.0015" material="markermat" contype="0" conaffinity="0"/>
+    <geom name="mk11" type="box" pos="0.66  0.28 0.0015" size="0.012 0.012 0.0015" material="markermat" contype="0" conaffinity="0"/>
+
+    <!-- occluder: plate on the camera side. contype=0 -> never touches robot or box,
+         it only blocks the line of sight. Slides along z; z_ref is set by the env. -->
+    <body name="occluder" pos="0.44 -0.12 0">
+      <joint name="occluder_x" type="slide" axis="1 0 0" range="-0.25 0.25" damping="50"/>
+      <joint name="occluder_z" type="slide" axis="0 0 1" range="-0.32 0.04" damping="50"/>
+      <geom name="occluder_plate" type="box" pos="0 0 0.11" size="0.10 0.006 0.11"
+        material="occludermat" contype="0" conaffinity="0"/>
+    </body>
+
+    <!-- fixed RGB camera; pose probed in scripts/dev_camera_probe.py -->
+    <camera name="rgb" pos="0.40 -1.15 0.82" xyaxes="1 0 0  0 0.711 0.703" fovy="60"/>
+  </worldbody>
+
+  <keyframe>
+    <key name="home"
+      qpos="0 0 0 -1.57079 0 1.57079 -0.7853 0.02 0.02 0.44 0 0.050 1 0 0 0 0 -0.30"
+      ctrl="0 0 0 -1.57079 0 1.57079 -0.7853 0"/>
+  </keyframe>
+</mujoco>
