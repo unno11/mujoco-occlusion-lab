@@ -113,15 +113,22 @@ class ObjectTracker:
                 if near_tool:
                     # object is being pushed: follow the pusher
                     self.vel = 0.5 * self.vel + 0.5 * np.asarray(tool_vel, float)
+                    # ...and trust the estimate longer: while the pusher is in contact
+                    # the object cannot have gone far. Without this the estimator
+                    # declares "lost" every ~60 hidden steps and the policy retreats
+                    # in a loop (measured in condition D: 12 retreats, no progress).
+                    self.var += 0.2 * cfg.process_var * dt
                 else:
                     self.vel = self.vel * cfg.velocity_decay
+                    self.var += cfg.process_var * dt
                 speed = float(np.linalg.norm(self.vel))
                 if speed > cfg.max_speed:
                     self.vel *= cfg.max_speed / speed
                 self.xy = self.xy + self.vel * dt
-                self.var += cfg.process_var * dt + (speed * dt) ** 2 * 0.1
+                self.var += (speed * dt) ** 2 * 0.1
                 self._prev_meas = None
-                if self.steps_since_seen > cfg.max_coast_steps or self.var > cfg.lost_var:
+                coast_limit = cfg.max_coast_steps * (3 if near_tool else 1)
+                if self.steps_since_seen > coast_limit or self.var > cfg.lost_var:
                     self.regime = "lost"
                 else:
                     self.regime = "predicted"

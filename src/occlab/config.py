@@ -30,7 +30,8 @@ class TaskCfg:
     max_control_steps: int = 400
     push_height: float = 0.012
     approach_height: float = 0.110
-    contact_gap: float = 0.072
+    contact_gap: float = 0.05
+    min_approach_x: float = 0.30
 
 
 @dataclass

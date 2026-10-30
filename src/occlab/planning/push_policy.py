@@ -49,6 +49,10 @@ class PushPolicy:
     def _contact_for(self, obj_xy: np.ndarray, goal_xy: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         d = self._unit(goal_xy - obj_xy)
         standoff = self.cfg.box_half_size + self.cfg.contact_gap
+        # Reachability guard: the stand-off point must stay out of the zone where the
+        # elbow folds into joint 4's limit. With objects as close as x = 0.365 a fixed
+        # 10 cm stand-off asked for x = 0.265 and the arm simply froze there.
+        standoff = min(standoff, max(0.04, float(obj_xy[0]) - self.cfg.min_approach_x))
         return obj_xy - d * standoff, d
 
     def _sanitize(self, obj_xy: np.ndarray) -> np.ndarray:

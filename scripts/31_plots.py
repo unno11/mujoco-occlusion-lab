@@ -64,22 +64,23 @@ def main() -> None:
     ax.set_ylabel("success rate")
     ax.set_ylim(0, 1.05)
     ax.grid(axis="y", alpha=0.3)
-    ax.legend(fontsize=8, frameon=False)
+    ax.legend(fontsize=7, frameon=True, framealpha=0.9, loc="lower left")
 
     # 2. estimate error while occluded
     ax = axes[1]
+    labels, values, colors = [], [], []
     for pol in policies:
         if pol == "oracle":
             continue
-        vals, labels = [], []
         for cond in conditions:
             sel = [e["est_error_mean_mm"] for e in episodes
                    if e["condition"] == cond and e["policy"] == pol and e["est_error_mean_mm"] is not None]
             if sel:
-                vals.append(np.mean(sel))
-                labels.append(cond)
-        if vals:
-            ax.bar([f"{pol}\n{c}" for c in labels], vals, color=POLICY_STYLE[pol][0])
+                labels.append(f"{cond}\n{POLICY_STYLE[pol][1]}")
+                values.append(np.mean(sel))
+                colors.append(POLICY_STYLE[pol][0])
+    if values:
+        ax.bar(labels, values, color=colors)
     ax.set_ylabel("estimate error while occluded (mm)")
     ax.tick_params(axis="x", labelsize=7)
     ax.grid(axis="y", alpha=0.3)

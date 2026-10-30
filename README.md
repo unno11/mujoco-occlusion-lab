@@ -1,146 +1,151 @@
 # MuJoCo Occlusion Manipulation Lab
 
-A robot that pushes a box to a goal using only a fixed RGB camera, and keeps pushing
-when the box disappears behind an occluding plate.
+A Franka Panda pushes a red box to a green goal using **only a fixed RGB camera**, and
+keeps pushing after the box disappears behind an occluding plate.
 
-The point of the project is one engineering question: **when vision is interrupted
-mid-task, how far does a remembered estimate get you, and when does it hurt?** The
-repository contains the simulation, the perception, the estimator, three policies and
-the batch evaluation that answers that question — including the case where memory
-does *not* help.
+The interesting question is not whether a scripted pusher can hit a box — it is what
+happens to the closed loop *观察 → 估计 → 规划 → 执行 → 反馈 → 更新* when the object
+is not in the image. This repo builds that loop end to end, then measures three
+policies against each other under four occlusion conditions, and reports what the
+numbers actually say — including the case where memory does not help.
 
-![Occluded push demo](results/demo/C_history_seed0.gif)
+![occlusion](figures/occlusion_ABC.png)
+![comparison](figures/comparison.png)
 
-## What is measured
+## What is actually implemented
 
-| | |
+| module | what it does |
 | --- | --- |
-| Scene | Franka Panda on a table, one 10 cm red cube, green goal patch, fixed 640×480 RGB camera, vertically sliding plate that only blocks the line of sight |
-| Task | push the cube into the goal (5 cm radius) |
-| Start | cube position uniform in x ∈ [0.36, 0.42], y ∈ [−0.03, 0.03], paired across policies |
-| Policies | `oracle` (simulator state), `current-obs` (current frame only), `history` (tracker) |
-| Conditions | A none, B partial, C full for 100 steps, D full until the end |
-| Budget | 600 control steps = 12 s simulated, 50 Hz control |
-| Runs | 10 seeds per (condition, policy) |
+| `envs/push_env.py` | MuJoCo scene (Panda + table + 10 cm box + goal + slide-mounted occluder), `reset/step/get_observation`, success + timeout, per-step detection |
+| `control/ik_controller.py` | 6-DOF damped-least-squares IK at 500 Hz on top of the 50 Hz command interface, tool point = the 12 mm pusher sphere |
+| `perception/calibration.py` | one-time homography from 4 magenta fiducials (their table coordinates are known), validated against the goal patch |
+| `perception/color_blob.py` | HSV segmentation of the box, area-based visibility/partial/occluded classification, calibrated silhouette-bias correction |
+| `state_estimation/object_tracker.py` | measure → correct, hide → predict (tool-velocity when the pusher is in contact, else decaying), uncertainty that grows while hidden, "lost" → retreat |
+| `planning/push_policy.py` | GO_ABOVE → DESCEND → ADVANCE push primitive with replanning when the object leaves the line |
+| `planning/policies.py` | the three policies below, all sharing the same primitive |
+| `evaluation/` + `scripts/30_run_matrix.py` | paired-seed batch runs, per-step logs, CSV/JSON, summary |
 
-<!-- RESULTS -->
+## The three policies
 
-## Architecture
+| policy | object position comes from | when the object is hidden |
+| --- | --- | --- |
+| `oracle` | MuJoCo ground truth (upper bound + debug only) | keeps pushing |
+| `current-obs` | the current frame only | **stops and waits** — it is not allowed to use the last seen position |
+| `history` | tracker estimate | keeps pushing on the prediction, corrects on re-observation |
 
-```
-            fixed RGB camera                 plate (line of sight only)
-                    │                                  │
-                    ▼                                  ▼
-   ┌──────────────────────────┐            ┌───────────────────────┐
-   │ perception               │            │ occluder schedule     │
-   │  HSV blob → homography   │            │  A/B/C/D conditions   │
-   └────────────┬─────────────┘            └───────────┬───────────┘
-                │ detection (xy, area, visible)        │
-                ▼                                      │
-   ┌──────────────────────────┐                        │
-   │ state estimation         │                        │
-   │  correct / predict /     │                        │
-   │  declare lost            │                        │
-   └────────────┬─────────────┘                        │
-                │ belief (xy, variance, regime)        │
-                ▼                                      ▼
-   ┌──────────────────────────┐            ┌───────────────────────┐
-   │ planning                 │            │ MuJoCo plant          │
-   │  go-above → descend →    │───────────▶│  Panda, box, table    │
-   │  advance along the line  │  joint     └───────────┬───────────┘
-   └────────────┬─────────────┘  targets             │
-                │                                     │
-                ▼                                     ▼
-   ┌──────────────────────────┐            ┌───────────────────────┐
-   │ control                  │◀───────────│ 6-dof damped LS IK    │
-   │  joint position targets  │  measured  │ on the pusher sphere  │
-   └──────────────────────────┘  tip pose  └───────────────────────┘
-```
+Only `oracle` ever touches `env.object_truth_xy()`. The other two see
+`obs["detection"]` (pixels → table coordinates) and nothing else.
 
-Perception and estimation never read the simulator. Ground truth is used in exactly
-three places: scoring, the `oracle` baseline, and the one-time calibration in which a
-constant silhouette bias is fitted.
+## Occlusion conditions
 
-## Quick start
-
-```bash
-# WSL2 / Ubuntu, Python 3.12. MuJoCo needs a renderer: EGL works headless here.
-cd ~/mujoco-occlusion-lab
-python3 -m venv .venv && ./.venv/bin/pip install -e .[dev]
-
-MUJOCO_GL=egl ./.venv/bin/python scripts/20_calibrate.py        # writes configs/calibration.json
-MUJOCO_GL=egl ./.venv/bin/python scripts/40_demo_video.py --condition C --policy history --seed 0
-MUJOCO_GL=egl ./.venv/bin/python scripts/30_run_matrix.py --seeds 10
-./.venv/bin/python scripts/31_plots.py                          # figures/comparison.png
-MUJOCO_GL=egl ./.venv/bin/python -m pytest -q                   # 29 tests
-```
-
-`scripts/11_batch_oracle.py --seeds 20` is the no-perception sanity check: the plant
-and the pushing controller alone, 20/20.
-
-## Perception calibration
-
-| step | result |
+| id | setup |
 | --- | --- |
-| Homography from 4 magenta fiducials + goal patch | marker residual 0.0 mm, goal error 2.0 mm |
-| Constant silhouette bias (cube seen from 45°) | (−5.7, −73.0) mm, spread 14 mm |
-| Detection error over a 6×5 grid of the workspace | mean 13.4 mm, p95 20.4 mm, max 23.1 mm, 30/30 detected |
+| A | no occluder |
+| B | plate parked at partial height — the box is always partially visible |
+| C | plate rises the step the pusher first touches the box, follows the box in x, stays 100 control steps (2 s), then drops |
+| D | like C but the plate never drops — the object stays hidden for the rest of the episode |
 
-The bias exists because the centroid of the visible red region of a 10 cm cube is not
-the projection of its footprint centre. It is measured once, stored in
-`configs/calibration.json`, and applied to every detection.
+The plate is mounted on two slide joints and has `contype=0 conaffinity=0`: it blocks
+the camera ray and nothing else, so the robot's reachability is identical in all four
+conditions.
 
-## What went wrong on the way (the useful part)
+## Results (10 paired seeds per cell, 120 episodes)
 
-Every one of these was found by measuring, not by reading code:
+Every condition uses the same seeds, so the start poses are paired across policies.
+Success = box centre within 50 mm of the goal.
 
-1. **Tool point, three times.** Finger body origins sit 9 cm above the fingertip; the
-   gripper collision mesh is a 23 cm blob whose lowest point is 2 cm *below* the
-   "fingertip"; support points of that blob are corners. Fixed by mounting an explicit
-   12 mm pusher sphere and reading it back with `geom_xpos`.
-2. **A QP-based IK froze silently.** `mink` + `daqp` returned near-zero joint
-   velocities in closed loop with a 2 cm error and no limit active. Replaced with 25
-   lines of damped least squares.
-3. **The rotation-error formula was invalid.** Summing column cross products degenerates
-   for the 180° flips a naively chosen "fingers down" target asks for; the IK was fed a
-   bogus axis. Replaced with an exact axis-angle error, and the downward target now
-   keeps the current yaw so the requested rotation is the smallest one.
-4. **The actuators are velocity-type.** `force = 4500·ctrl − 4500·q − 450·qd`, so a
-   small commanded offset means a slow arm: with a 1 cm Cartesian step the tool
-   travelled 1.4 mm per control step and never arrived.
-5. **Approach distance is a two-sided constraint.** 17 cm behind the box folds the arm
-   until joint 4 hits its limit and freezes; 7 cm and the ball grazes the box side and
-   stalls on the way down. 10 cm works.
-6. **A white-threshold "calibration" found the robot.** The Panda is white, so four
-   white fiducials were "detected" on its links and the homography was 240 mm off.
-   Magenta fiducials fixed it.
-7. **Four points cannot validate a homography.** They constrain exactly as many
-   unknowns as they provide, so a mirrored assignment fits perfectly. Adding the goal
-   patch as a fifth point did not help either — the goal sits on the mirror axis. The
-   correspondence is now fixed by construction and validated by the goal.
-8. **A static occluder stops occluding.** Once the box is pushed past the plate it
-   reappears, so "temporary full occlusion" was a no-op until the plate learned to
-   follow the box in x.
-9. **Constant-velocity prediction runs away.** Extrapolating the object's own last
-   velocity overshot by 7 cm in 60 hidden steps and triggered a pointless replan; the
-   prediction is now driven by the pusher's velocity while the tool is close.
+| condition | oracle | current-obs | history |
+| --- | --- | --- | --- |
+| A: no occlusion | **10/10** (319 steps) | 9/10 (355) | 9/10 (355) |
+| B: partial | **10/10** (319) | 10/10 (286) | 10/10 (287) |
+| C: full, 100 steps | **10/10** (328) | 10/10 (318, waits 100) | 9/10 (344) |
+| D: full, persistent | **10/10** (328) | 1/10 (570, waits 381) | 7/10 (396) |
+
+Estimate error while the object is hidden (mean over hidden steps, vs ground truth,
+computed offline only): **14.8 mm** (B), **14.3 mm** (C), **102.4 mm** (D).
+Re-localisation after the object reappears: **1 control step**.
+
+### What these numbers mean
+
+**Oracle is a clean upper bound** — 40/40 across all conditions. Nothing about the
+scene or the pushing primitive is broken; every difference below is about perception.
+
+**Temporary occlusion does not need memory.** In C the baseline reaches 10/10 by
+simply freezing for the 100 hidden steps and resuming when the plate drops; the
+history policy is *slower* (344 vs 318 steps) and drops one seed. This is a null
+result and it is the honest one: if the object comes back quickly and the robot can
+afford to wait, caching the last position buys nothing.
+
+**Persistent occlusion is where memory is the difference between a task and no task.**
+In D the baseline collapses to 1/10 — it waits an average of 381 steps for an object
+that never returns. The history policy finishes 7/10.
+
+**Memory is not free, and its failure mode is visible.** In D the estimate drifts to
+102 mm mean error: contact-aware prediction keeps it alive but does not stop it, and
+3/10 episodes still thrash (retreat → re-approach → retreat). The estimator trusts a
+constant-velocity + pusher-motion model, which is wrong as soon as the box slips out
+from under the pusher.
+
+## Perception numbers (the part that is easy to fake, so here are the checks)
+
+- Homography from 4 fiducials: marker residual **0.0 mm**; independent check against
+  the goal patch: **2.6 mm**.
+- Detection error over a 6×5 grid covering the workspace (30 positions, box moved by
+  setting the free joint, camera frame rendered, HSV centroid → table):
+  **mean 13.4 mm, p95 20.4 mm, max 23.1 mm, 30/30 detected**.
+- That 13 mm is a *systematic* artifact, not noise: the silhouette centroid of a 10 cm
+  cube seen obliquely is not the projection of its base centre. A constant correction
+  vector is fitted **once** during calibration; without it the error is ~73 mm.
+
+## Engineering notes worth reading
+
+Four failures that took real debugging, because they are the ones that recur:
+
+1. **The tool point is not the fingertip.** The finger body origin sits 9 cm above the
+   finger tip; the gripper collision mesh (`hand_c`) is a single 23 cm block whose
+   lowest point is 2 cm *below* the fingers. Pushing with either one dragged the box
+   backwards. Fix: a 12 mm sphere rigidly attached in front of the hand, read back with
+   `geom_xpos`, `hand_c` collision disabled.
+2. **A QP IK silently did nothing.** `mink` + `daqp` returned ~zero joint velocity with
+   no error and the arm parked 12 cm above the target. Replaced with 25 lines of damped
+   least squares where every intermediate is printable.
+3. **The first IK pose target was geometrically impossible.** Asking for the home
+   orientation while descending to the table left the 23 cm palm mesh against the
+   surface; orientation error stayed at 47°. Fixed by targeting a reachable
+   fingers-down pose and raising the push height.
+4. **Calibration looked right and was wrong twice.** With exactly 4 points the
+   reprojection residual is *identically zero* — it cannot detect a mismatched point
+   ordering. A permutation search then locked onto a 180°-rotated assignment because
+   the validation target (the goal patch) sat on the symmetry axis. Fixed by fixing the
+   correspondence from image geometry (rows = far/near by image v) and using the goal
+   only as a check.
 
 ## Limitations
 
-* The object is a single red cube; detection is an HSV threshold plus a homography,
-  not a learned detector. Different object colours would need new thresholds, and the
-  constant bias is specific to a 10 cm cube on this table.
-* The estimator is constant-velocity with an explicit uncertainty. It has no dynamics
-  model of the box, so a fast change of push direction during a long occlusion is not
-  predicted.
-* The pushing controller is scripted and single-shot: it approaches from behind along
-  the line object → goal and has no recovery for a box that rolls away.
-* The plate tracks the object, which is convenient for a repeatable experiment and
-  slightly generous to the robot: a real occluder would be static.
+- One object, one colour, HSV thresholds, no depth, no learned perception.
+- Flat table only; the homography is invalid off the plane.
+- The estimator is constant-velocity + pusher coupling; no object dynamics, no slip model.
+- Pushing is a single scripted push; no grasp, no multi-push strategy, no failure recovery beyond retreat-and-retry.
+- 10 seeds per cell: differences of one episode (e.g. 9/10 vs 10/10) are not significant.
 
-## Attribution
+## Install and run
 
-`assets/panda/` is a copy of `google-deepmind/mujoco_menagerie`'s `franka_emika_panda`
-(Apache-2.0); the local modifications are listed in `docs/design.md` and marked inline
-with comments. Everything else in this repository — scene, controller, perception,
-estimator, policies, evaluation — is written for this project.
+```bash
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e .            # mujoco, numpy, opencv-python, imageio, matplotlib, pytest
+MUJOCO_GL=egl python scripts/00_env_check.py          # scene loads, renders one frame
+MUJOCO_GL=egl python scripts/20_calibrate.py          # fits configs/calibration.json
+MUJOCO_GL=egl python scripts/30_run_matrix.py --seeds 3 --conditions A,B,C,D
+MUJOCO_GL=egl python scripts/31_plots.py --in results/matrix.json --out figures
+MUJOCO_GL=egl python scripts/40_demo_video.py --condition D --policy history --seed 0
+MUJOCO_GL=egl pytest -q                                # 29 tests
+```
+
+The scene is a vendored copy of `mujoco_menagerie/franka_emika_panda` (BSD-3-Clause,
+DeepMind) with local modifications documented in `assets/panda/README_mods.md`: an
+added pusher sphere, `hand_c` collision disabled, wrist `forcerange` widened to ±40 N·m,
+no keyframe. Everything else in `src/`, `scripts/` and `assets/panda/scene_push.xml`
+is written for this project.
+
+Headless rendering uses EGL. On this machine a 320×240 frame costs ~55 ms, which is why
+batch runs render at half resolution; the demo video uses full resolution.
